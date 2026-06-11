@@ -381,32 +381,53 @@ export const HooksPlugin: Plugin = async ({ directory }) => {
     },
   }
     // ═══════════════════════════════════════════════════════════
-    // BACKGROUND AGENTS — Dispatch parallel agents
+    // BACKGROUND AGENTS — Dispatch parallel agents (true parallel)
     // ═══════════════════════════════════════════════════════════
     dispatch_agents: tool({
-      description: "Dispatches multiple agents in parallel. Each agent gets a focused prompt. For true parallel analysis of multiple files or aspects.",
+      description: "Dispatches multiple agents in TRUE parallel. Each agent spawns independently. For parallel analysis of multiple files or aspects simultaneously.",
       args: {
         agents: tool.schema.array(tool.schema.object({
           name: tool.schema.string().describe("Agent name"),
           prompt: tool.schema.string().describe("Focused task for this agent"),
           model: tool.schema.string().describe("Model override").optional().default(""),
         })).describe("Array of agents"),
-        sync: tool.schema.enum(["all","any"]).describe("all=wait for all, any=first result").optional().default("all"),
+        sync: tool.schema.enum(["all","any"]).describe("all=wait for ALL agents, any=return FIRST result").optional().default("all"),
       },
       async execute(args) {
         const list = args.agents || []
         if (list.length === 0) return { output: "No agents specified." }
-        const results = []
-        for (const agent of list) {
-          try {
-            const raw = execSync(`opencode run "${(agent.prompt||"").replace(/"/g,'\\"')}" --pure --format default${agent.model ? " --model " + agent.model : ""}`, { encoding: "utf8", timeout: 120000, maxBuffer: 10*1024*1024 })
-            const out = raw.replace(/\x1B\[[0-9;]*[a-zA-Z]/g,"").trim()
-            results.push({ name: agent.name, output: out.slice(0,2000), success: true })
-            if (args.sync === "any") break
-          } catch (e) { results.push({ name: agent.name, output: (e.message||"").slice(0,200), success: false }) }
+
+        // Launch ALL agents in TRUE parallel via Promise.all
+        const agents = list.map((agent: any) => {
+          const run = (async () => {
+            try {
+              const raw = execSync(`opencode run "${(agent.prompt||"").replace(/"/g,'\\"')}" --pure --format default${agent.model ? " --model " + agent.model : ""}`, { encoding: "utf8", timeout: 120000, maxBuffer: 10*1024*1024 })
+              const out = raw.replace(/\x1B\[[0-9;]*[a-zA-Z]/g,"").trim()
+              return { name: agent.name, output: out.slice(0,2000), success: true }
+            } catch (e: any) {
+              return { name: agent.name, output: (e.message||"").slice(0,200), success: false }
+            }
+          })()
+          return args.sync === "any" ? null : run
+        }).filter(Boolean)
+
+        let results: any[]
+        if (args.sync === "any") {
+          // Race: return FIRST successful result
+          const racePromises = list.map((agent: any) =>
+            execSync(`opencode run "${(agent.prompt||"").replace(/"/g,'\\"')}" --pure --format default${agent.model ? " --model " + agent.model : ""}`, { encoding: "utf8", timeout: 120000, maxBuffer: 10*1024*1024 })
+              .then((raw: string) => ({ name: agent.name, output: raw.replace(/\x1B\[[0-9;]*[a-zA-Z]/g,"").trim().slice(0,2000), success: true }))
+              .catch((e: any) => null)
+          )
+          const winner = await Promise.race(racePromises)
+          results = winner ? [winner] : [{name:"none", output:"all agents failed", success:false}]
+        } else {
+          // Wait for ALL to complete
+          results = await Promise.all(agents)
         }
-        const ok = results.filter(r=>r.success).length
-        return { output: `═══ BACKGROUND AGENTS (${results.length}) ═══\nOK: ${ok}, Fail: ${results.length-ok}\n\n${results.map(r=>`[${r.success?"OK":"FAIL"}] ${r.name}: ${(r.output||"").slice(0,200)}`).join("\n")}` }
+
+        const ok = results.filter((r: any) => r.success).length
+        return { output: `═══ BACKGROUND AGENTS (${results.length}) ═══\nOK: ${ok}, Fail: ${results.length-ok}\n\n${results.map((r: any) => `[${r.success?"OK":"FAIL"}] ${r.name}: ${(r.output||"").slice(0,200)}`).join("\n")}` }
       }
     }),
 

@@ -15,6 +15,9 @@ import { tool } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
 import { readFileSync, existsSync } from "fs"
 
+// ─── Guide-3x review counter for self_review blocking ──
+const reviewCounts = new Map<string, { count: number; lastBlocked: number }>()
+
 export const EnhancementsPlugin: Plugin = async ({ directory }) => {
 
   // ─── CODE STRUCTURE CONTEXT ─────────────────────────
@@ -63,9 +66,9 @@ export const EnhancementsPlugin: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═══ 2. SELF-REVIEW TRIGGER ═══════════════════════
+      // ═══ 2. SELF-REVIEW TRIGGER (Guide-3x-then-block) ═════
       self_review: tool({
-        description: "Triggers a self-review of the last code change. Analyzes the change for: logic errors, edge cases, security issues, style violations. Returns findings with fix suggestions.",
+        description: "Triggers a self-review of the last code change. Analyzes for: logic errors, edge cases, security issues, style violations. Has Guide-3x-then-block enforcement — after 3 critical findings, blocks the edit.",
         args: {
           file: tool.schema.string().describe("File that was changed"),
           change_description: tool.schema.string().describe("What the change was supposed to do"),
@@ -73,18 +76,48 @@ export const EnhancementsPlugin: Plugin = async ({ directory }) => {
         async execute(args) {
           if (!existsSync(args.file)) return { output: `File not found: ${args.file}` }
           const content = readFileSync(args.file, "utf8")
-          let findings: string[] = []
+          let warnings: string[] = []
+          let criticals: string[] = []
 
-          // Check for common issues
-          if (content.includes("console.log")) findings.push("⚠ Contains console.log — remove before production")
-          if (content.includes("TODO") || content.includes("FIXME")) findings.push("⚠ Contains TODO/FIXME markers")
-          if (content.includes(".only(")) findings.push("⚠ Contains .only() — will skip other tests")
-          if (content.includes("debugger;")) findings.push("⛔ Contains debugger; statement")
-          if (content.length > 500 && !content.includes("try") && (content.includes("async") || content.includes("Promise"))) findings.push("⚠ Async code without try/catch")
-          if (content.includes("any") && (content.includes(": any") || content.includes("as any"))) findings.push("⚠ Uses 'any' type — consider proper typing")
+          // Check for issues
+          if (content.includes("console.log")) warnings.push("⚠ Contains console.log — remove before production")
+          if (content.includes("TODO") || content.includes("FIXME")) warnings.push("⚠ Contains TODO/FIXME markers")
+          if (content.includes(".only(")) warnings.push("⚠ Contains .only() — will skip other tests")
+          if (content.length > 500 && !content.includes("try") && (content.includes("async") || content.includes("Promise"))) warnings.push("⚠ Async code without try/catch")
+          if (content.includes("any") && (content.includes(": any") || content.includes("as any"))) warnings.push("⚠ Uses 'any' type — consider proper typing")
+          if (content.includes("debugger;")) criticals.push("⛔ CRITICAL: Contains debugger; statement")
+          if (/password|secret|api[_-]?key|token|credential/i.test(content) && !/\.env|example/i.test(args.file)) criticals.push("⛔ CRITICAL: Possible hardcoded secret detected")
+          if (/eval\s*\(|exec\s*\(|Function\s*\(/.test(content)) criticals.push("⛔ CRITICAL: Unsafe eval/exec/Function usage")
 
-          if (findings.length === 0) findings.push("✅ No obvious issues found")
-          return { output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${findings.join("\n")}` }
+          // Track review count for this file (Guide-3x)
+          const reviewKey = `review_${args.file}`
+          const reviewData = reviewCounts.get(reviewKey) || { count: 0, lastBlocked: 0 }
+          const now = Date.now()
+
+          // Reset if last block was more than 5 minutes ago (fresh session)
+          if (now - reviewData.lastBlocked > 300000) reviewData.count = 0
+
+          if (criticals.length > 0) {
+            reviewData.count++
+            reviewData.lastBlocked = now
+            reviewCounts.set(reviewKey, reviewData)
+
+            if (reviewData.count >= 3) {
+              // BLOCK: Force the user to acknowledge critical issues
+              reviewData.count = 0
+              reviewCounts.set(reviewKey, reviewData)
+              return {
+                output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${criticals.join("\n")}\n\n⛔ BLOCKED: Critical issues found after ${reviewData.count >= 3 ? '3 reviews' : `${reviewData.count}/3`}. Fix these before proceeding.\n\nFIX THESE ISSUES and run self_review again to confirm they're resolved.`
+              }
+            } else {
+              return {
+                output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${criticals.join("\n")}\n\n${warnings.length > 0 ? `\n${warnings.join("\n")}\n` : ""}\n\n⚠ ${reviewData.count}/3: Critical issues found. Fix them now. After ${3 - reviewData.count} more critical finding(s), this will block.`
+              }
+            }
+          }
+
+          if (warnings.length === 0) warnings.push("✅ No obvious issues found")
+          return { output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${warnings.join("\n")}\n\n${criticals.length > 0 ? "\n" + criticals.join("\n") : ""}` }
         }
       }),
 
