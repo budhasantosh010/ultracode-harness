@@ -25,7 +25,8 @@
     "./plugins/hooks.ts",
     "./plugins/tiered-context.ts",
     "./plugins/enhancements.ts",
-    "./plugins/researcher-loop.ts"
+    "./plugins/researcher-loop.ts",
+    "./plugins/knowledge.ts"
   ],
   "agent": {
     "build": { "steps": 50 },
