@@ -26,7 +26,8 @@
     "./plugins/tiered-context.ts",
     "./plugins/enhancements.ts",
     "./plugins/researcher-loop.ts",
-    "./plugins/knowledge.ts"
+    "./plugins/knowledge.ts",
+    "./plugins/ecc-features.ts"
   ],
   "agent": {
     "build": { "steps": 50 },
