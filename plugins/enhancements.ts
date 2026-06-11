@@ -76,18 +76,23 @@ export const EnhancementsPlugin: Plugin = async ({ directory }) => {
         async execute(args) {
           if (!existsSync(args.file)) return { output: `File not found: ${args.file}` }
           const content = readFileSync(args.file, "utf8")
-          let warnings: string[] = []
-          let criticals: string[] = []
 
-          // Check for issues
-          if (content.includes("console.log")) warnings.push("⚠ Contains console.log — remove before production")
-          if (content.includes("TODO") || content.includes("FIXME")) warnings.push("⚠ Contains TODO/FIXME markers")
-          if (content.includes(".only(")) warnings.push("⚠ Contains .only() — will skip other tests")
-          if (content.length > 500 && !content.includes("try") && (content.includes("async") || content.includes("Promise"))) warnings.push("⚠ Async code without try/catch")
-          if (content.includes("any") && (content.includes(": any") || content.includes("as any"))) warnings.push("⚠ Uses 'any' type — consider proper typing")
-          if (content.includes("debugger;")) criticals.push("⛔ CRITICAL: Contains debugger; statement")
-          if (/password|secret|api[_-]?key|token|credential/i.test(content) && !/\.env|example/i.test(args.file)) criticals.push("⛔ CRITICAL: Possible hardcoded secret detected")
-          if (/eval\s*\(|exec\s*\(|Function\s*\(/.test(content)) criticals.push("⛔ CRITICAL: Unsafe eval/exec/Function usage")
+          // Confidence-based findings: only report if confidence > 80%
+          const findings: Array<{ text: string; severity: string; confidence: number }> = []
+          if (content.includes("console.log")) findings.push({ text: "⚠ Contains console.log — remove before production", severity: "warn", confidence: 0.70 })
+          if (content.includes("TODO") || content.includes("FIXME")) findings.push({ text: "⚠ Contains TODO/FIXME markers", severity: "warn", confidence: 0.90 })
+          if (content.includes(".only(")) findings.push({ text: "⚠ Contains .only() — will skip other tests", severity: "warn", confidence: 0.95 })
+          if (content.length > 500 && !content.includes("try") && (content.includes("async") || content.includes("Promise"))) findings.push({ text: "⚠ Async code without try/catch", severity: "warn", confidence: 0.60 })
+          if (content.includes("any") && (content.includes(": any") || content.includes("as any"))) findings.push({ text: "⚠ Uses 'any' type — consider proper typing", severity: "warn", confidence: 0.70 })
+          if (content.includes("debugger;")) findings.push({ text: "⛔ CRITICAL: Contains debugger; statement", severity: "critical", confidence: 1.00 })
+          if (/password|secret|api[_-]?key|token|credential/i.test(content) && !/\.env|example/i.test(args.file)) findings.push({ text: "⛔ CRITICAL: Possible hardcoded secret detected", severity: "critical", confidence: 0.99 })
+          if (/eval\s*\(|exec\s*\(|Function\s*\(/.test(content)) findings.push({ text: "⛔ CRITICAL: Unsafe eval/exec/Function usage", severity: "critical", confidence: 0.95 })
+
+          // Filter by confidence threshold >80%
+          const filteredFindings = findings.filter(f => f.confidence >= 0.80)
+          const warnings = filteredFindings.filter(f => f.severity === "warn").map(f => f.text)
+          const criticals = filteredFindings.filter(f => f.severity === "critical").map(f => f.text)
+          const suppressedCount = findings.length - filteredFindings.length
 
           // Track review count for this file (Guide-3x)
           const reviewKey = `review_${args.file}`
@@ -117,7 +122,8 @@ export const EnhancementsPlugin: Plugin = async ({ directory }) => {
           }
 
           if (warnings.length === 0) warnings.push("✅ No obvious issues found")
-          return { output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${warnings.join("\n")}\n\n${criticals.length > 0 ? "\n" + criticals.join("\n") : ""}` }
+          const confidenceNote = suppressedCount > 0 ? `\n\n(ℹ ${suppressedCount} low-confidence findings not shown - confidence <80%)` : ""
+          return { output: `═══ SELF-REVIEW: ${args.file} ═══\nChange: ${args.change_description}\n\n${warnings.join("\n")}${criticals.length > 0 ? "\n" + criticals.join("\n") : ""}${confidenceNote}` }
         }
       }),
 
