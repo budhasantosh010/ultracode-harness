@@ -219,6 +219,118 @@ export const ECCFeaturesPlugin: Plugin = async ({ directory }) => {
           return { output: "═══ AGENTSHIELD SCAN ═══\nPath: " + target + "\nGrade: " + (cr > 0 ? "F" : hi > 0 ? "D" : "A") + "\n\n" + (f.length ? f.map(x => "[" + x.s.toUpperCase() + "] " + x.file + ": " + x.issue).join("\n") : "✅ No issues found") }
         }
       }),
+
+      e2e_runner: tool({
+        description: "End-to-end test agent. Generates Playwright tests for user flows: login, navigation, forms, critical paths. Tests from user perspective.",
+        args: { flow: tool.schema.string().describe("User flow to test (e.g. 'user login')") },
+        async execute(args) {
+          const safeName = args.flow.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 30)
+          return { output: "═══ E2E TEST: " + args.flow + " ═══\nFile: e2e/" + safeName + ".spec.ts\n\nimport { test, expect } from '@playwright/test';\ntest.describe('" + args.flow + "', () => {\n  test('completes the flow', async ({ page }) => {\n    await page.goto('/');\n    // TODO: Add steps for: " + args.flow + "\n    // Example: await page.fill('#email', 'user@example.com');\n    // Example: await page.click('button[type=\"submit\"]');\n    // Example: await expect(page.locator('.dashboard')).toBeVisible();\n  });\n  test('handles errors gracefully', async ({ page }) => {\n    await page.goto('/');\n    // TODO: Test error states\n  });\n});\n\nRun: npx playwright test e2e/" + safeName + ".spec.ts" }
+        }
+      }),
+
+      refactor_cleaner: tool({
+        description: "Cleanup agent. Finds dead code, unnecessary comments, console.log, defensive checks, over-engineering. Keeps business logic intact.",
+        args: { file: tool.schema.string().describe("File to clean up") },
+        async execute(args) {
+          if (!existsSync(args.file)) return { output: "File not found: " + args.file }
+          const c = readFileSync(args.file, "utf8")
+          const r = []
+          if (c.includes("console.log")) r.push("Remove console.log — use proper logging")
+          if (c.includes("debugger;")) r.push("REMOVE debugger; statement")
+          if (c.includes("TODO") || c.includes("FIXME")) r.push("Address TODO/FIXME markers")
+          if ((c.match(/\/\//g) || []).length > c.split("\n").length * 0.3) r.push("Excessive comments — let code speak")
+          if (c.includes("|| true")) r.push("Remove '|| true' — suppresses real errors")
+          return { output: "═══ REFACTOR CLEANER ═══\n" + args.file + "\n\n" + (r.length ? r.join("\n") : "✅ No issues found") + "\n\n" + r.length + " improvement(s)" }
+        }
+      }),
+
+      doc_updater: tool({
+        description: "Documentation agent. Scans changed file and suggests README, API doc, and changelog updates. Keeps docs in sync with code.",
+        args: { file: tool.schema.string().describe("Changed file"), change: tool.schema.string().describe("What changed") },
+        async execute(args) {
+          const exports = existsSync(args.file) ? (readFileSync(args.file, "utf8").match(/export\s+(default\s+)?(const|function|class|interface|type)\s+\w+/g) || []).join(", ") : ""
+          return { output: "═══ DOC UPDATE ═══\nFile: " + args.file + "\nChange: " + args.change + "\n\nREADME:\n" + (exports ? "  Document new: " + exports : "  No new public API") + "\n\nChangelog:\n  - " + args.change + " (" + args.file + ")\n\n⚠ Review before applying." }
+        }
+      }),
+
+      design_quality: tool({
+        description: "Frontend design quality check. Flags generic template-looking UI: default gradients, generic cards, unstyled defaults, missing responsive patterns.",
+        args: { file: tool.schema.string().describe("Frontend file to check") },
+        async execute(args) {
+          if (!existsSync(args.file)) return { output: "File not found: " + args.file }
+          const c = readFileSync(args.file, "utf8")
+          const r = []
+          if (c.includes("bg-gradient-to-r from-") && c.includes("to-")) r.push("Generic gradient — use brand colors")
+          if (c.includes("text-gray-500") || c.includes("text-gray-400")) r.push("Generic gray text — use brand text color")
+          if (c.includes("className=\"border\"")) r.push("Generic border — style it")
+          if (!/mobile|sm:|md:|lg:|responsive|grid|flex|w-full/i.test(c)) r.push("No responsive patterns detected")
+          if (r.length === 0) r.push("✅ Design looks custom")
+          return { output: "═══ DESIGN QUALITY ═══\n" + args.file + "\n\n" + r.join("\n") }
+        }
+      }),
+
+      governance_capture: tool({
+        description: "Policy violation logging. Detects: hardcoded secrets, disabled security rules, unsafe patterns. Logs to governance.jsonl for audit trails.",
+        args: { file: tool.schema.string().describe("File to audit") },
+        async execute(args) {
+          if (!existsSync(args.file)) return { output: "File not found: " + args.file }
+          const c = readFileSync(args.file, "utf8"); const v = []
+          if (c.includes("api[_-]?key") || /sk-[A-Za-z0-9]{20,}/.test(c)) v.push("CRITICAL: API key in source")
+          if (c.includes("password")) v.push("HIGH: password literal in source")
+          if (c.includes("@ts-ignore")) v.push("HIGH: TypeScript strict mode bypass")
+          if (c.includes("console.log")) v.push("LOW: console.log in production")
+          if (v.length > 0) {
+            const logFile = directory + "/.opencode/runtime/knowledge/governance.jsonl"
+            for (const vi of v) appendFileSync(logFile, JSON.stringify({ type: "governance", file: args.file, violation: vi, timestamp: new Date().toISOString() }) + "\n", "utf8")
+          }
+          return { output: "═══ GOVERNANCE ═══\n" + args.file + "\n" + (v.length ? v.join("\n") : "✅ No violations") + "\n\nLogged to governance.jsonl" }
+        }
+      }),
+
+      autonomous_loops: tool({
+        description: "6 autonomous loop patterns: sequential pipeline, REPL session, infinite agentic, continuous PR, cleanup pass, DAG orchestration. Select the right pattern for your task.",
+        args: { pattern: tool.schema.enum(["sequential", "repl", "infinite", "continuous-pr", "cleanup", "dag"]).describe("Loop pattern to use").optional().default("sequential"), task: tool.schema.string().describe("Task to run in the loop") },
+        async execute(args) {
+          const patterns: Record<string, string> = {
+            sequential: "Sequential Pipeline: chain claude -p calls. Each step is isolated, fresh context. Best for CI/CD-style pipelines.",
+            repl: "REPL Session: persistent loop with conversation history. Best for interactive exploration and iteration.",
+            infinite: "Infinite Agentic Loop: orchestrator + parallel sub-agents. Best for generating many variations (designs, content).",
+            "continuous-pr": "Continuous PR Loop: create branch, run, commit, PR, wait for CI, merge, repeat. Best for automated feature work.",
+            cleanup: "Cleanup Pass (De-Sloppify): dedicated cleanup agent after implementer. Removes defensive checks, unnecessary tests, debug logs.",
+            dag: "DAG Orchestration (Ralphinho): RFC decomposes into dependency DAG, each unit through tiered pipeline. Best for complex multi-file features.",
+          }
+          const desc = patterns[args.pattern] || patterns.sequential
+          return { output: "═══ AUTONOMOUS LOOP: " + args.pattern + " ═══\nTask: " + args.task + "\n\n" + desc + "\n\nInstructions:\n1. Read this file\n2. Execute the task using the " + args.pattern + " pattern\n3. Report results" }
+        }
+      }),
+
+      security_policy: tool({
+        description: "Security policy reference. Shows supported versions, vulnerability reporting process, response timelines, and supply-chain rules.",
+        args: { section: tool.schema.enum(["overview", "reporting", "supported", "supply-chain"]).describe("Policy section").optional().default("overview") },
+        async execute(args) {
+          const sections: Record<string, string> = {
+            overview: "ECC-Style Security Policy\n\nSupported: current version only\nReporting: private vulnerability disclosure\nResponse: 48hr ack, 7d assessment, 14d critical fix",
+            reporting: "Vulnerability Reporting:\n1. DO NOT open public issues\n2. Send details to security request\n3. Include: affected file, version, reproduction steps, impact\n4. Expect: 48hr acknowledgment, 7d initial assessment",
+            "supply-chain": "Supply-Chain Rules:\n1. Pin third-party GitHub Actions to commit SHAs\n2. Never shell untrusted GitHub context\n3. Official packages only — verify npm/GitHub sources\n4. Lock files must be committed\n5. Regular npm audit",
+          }
+          return { output: "═══ SECURITY POLICY ═══\n" + (sections[args.section] || sections.overview) + "\n\nUse security_reviewer or agentshield for automated scanning." }
+        }
+      }),
+
+      supply_chain_rules: tool({
+        description: "Supply-chain security rules: pinned SHAs in CI, no untrusted shell, official packages only, lock files committed, regular audits.",
+        args: { action: tool.schema.enum(["check", "fix"]).describe("check=audit deps, fix=run npm audit fix").optional().default("check") },
+        async execute(args) {
+          const r = []
+          if (args.action === "check") {
+            try { const a = execSync("npm audit 2>&1 || true", { timeout: 30000 }).toString().trim(); r.push(a) } catch { r.push("No package.json found") }
+            try { const l = execSync("git ls-files package-lock.json yarn.lock pnpm-lock.yaml 2>/dev/null", { timeout: 5000 }).toString().trim(); r.push(l ? "✓ Lock files committed" : "⚠ No lock file tracked in git") } catch {}
+            return { output: "═══ SUPPLY CHAIN CHECK ═══\n" + r.join("\n") }
+          }
+          try { const f = execSync("npm audit fix 2>&1 || true", { timeout: 60000 }).toString().trim(); return { output: "═══ SUPPLY CHAIN FIX ═══\n" + f } } catch { return { output: "═══ SUPPLY CHAIN ═══\nNo package.json found" } }
+        }
+      }),
     },
 
     // ─── Pre-Compact save: save state before compaction ─
