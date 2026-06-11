@@ -1,0 +1,71 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/mimo-v2.5-free",
+  "plugin": [
+    "./plugins/harness.ts",
+    "./plugins/ultracode-runtime.ts",
+    "./plugins/workflow-executor.ts",
+    "./plugins/simulation-engine.ts",
+    "./plugins/profile-system.ts",
+    "./plugins/interview-system.ts",
+    "./plugins/report-system.ts",
+    "./plugins/simulation-watch.ts",
+    "./plugins/graphify-bridge.ts",
+    "./plugins/memory-scanner.ts",
+    "./plugins/dynamic-workflows.ts",
+    "./plugins/subagents.ts",
+    "./plugins/skills.ts",
+    "./plugins/advanced-features.ts",
+    "./plugins/runtime.ts",
+    "./plugins/rlm-bridge.ts",
+    "./plugins/verifier.ts",
+    "./plugins/evolver.ts",
+    "./plugins/shell-bridge.ts",
+    "./plugins/hook-matchers.ts"
+  ],
+  "agent": {
+    "build": { "steps": 50 },
+    "plan": { "steps": 30 }
+  },
+  "compaction": {
+    "auto": true,
+    "tail_turns": 20
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "*": "ask",
+      "git status *": "allow",
+      "git branch *": "allow",
+      "git log *": "allow",
+      "git diff *": "allow",
+      "git checkout -b *": "allow",
+      "git checkout test/*": "allow",
+      "git push *": "deny",
+      "git merge *": "deny",
+      "git checkout main": "ask",
+      "git checkout master": "ask",
+      "npx *": "allow",
+      "npx * | *": "allow",
+      "npm *": "allow",
+      "node *": "allow",
+      "bun *": "allow",
+      "python *": "allow",
+      "cargo *": "allow",
+      "* tsc *": "allow",
+      "* tsc --noEmit *": "allow",
+      "head *": "allow",
+      "sort *": "allow",
+      "wc *": "allow",
+      "grep *": "allow",
+      "findstr *": "allow",
+      "more *": "allow",
+      "tail *": "allow",
+      "true": "allow"
+    }
+  },
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "snapshot": true
+}

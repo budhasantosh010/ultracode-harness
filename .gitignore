@@ -1,0 +1,24 @@
+# UltraCode Harness — .gitignore
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# OpenCode runtime state (never commit — machine-specific)
+opencode.jsonc
+.opencode/
+.graphify-out/
+*.runtime/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

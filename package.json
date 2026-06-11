@@ -1,0 +1,18 @@
+{
+  "name": "ultracode-harness",
+  "version": "1.0.0",
+  "description": "UltraCode Harness — Makes cheap AI models perform like Opus 4.8. Deterministic enforcement gates + simulation engine + knowledge graphs for OpenCode.",
+  "keywords": ["opencode", "ai", "coding-agent", "harness", "ultracode", "simulation", "swarm-intelligence"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/budhasantosh010/ultracode-harness"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.16.0"
+  },
+  "scripts": {
+    "install:plugins": "node scripts/copy-plugins.js",
+    "postinstall": "npm run install:plugins"
+  }
+}
