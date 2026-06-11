@@ -21,7 +21,10 @@
     "./plugins/verifier.ts",
     "./plugins/evolver.ts",
     "./plugins/shell-bridge.ts",
-    "./plugins/hook-matchers.ts"
+    "./plugins/hook-matchers.ts",
+    "./plugins/hooks.ts",
+    "./plugins/tiered-context.ts",
+    "./plugins/enhancements.ts"
   ],
   "agent": {
     "build": { "steps": 50 },
