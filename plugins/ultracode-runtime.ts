@@ -1,10 +1,10 @@
-// ═══════════════════════════════════════════════════════════════
-// ULTRACODE RUNTIME — REAL workflow execution engine
+﻿// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ULTRACODE RUNTIME â€” REAL workflow execution engine
 // Phase 5: State-machine orchestrator for agent scripts
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // The model writes: execute_workflow_script(script)
-// Then loops: workflow_next_step() → do the work → workflow_complete_step(result)
-// This is a DETERMINISTIC state machine — the model never decides what's next.
+// Then loops: workflow_next_step() â†’ do the work â†’ workflow_complete_step(result)
+// This is a DETERMINISTIC state machine â€” the model never decides what's next.
 
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
@@ -15,13 +15,13 @@ import { promisify } from "util"
 const readFileAsync = promisify(readFile)
 const writeFileAsync = promisify(writeFile)
 
-// ─── Agent Caps (matching Claude Code June 2026 limits) ─────
+// â”€â”€â”€ Agent Caps (matching Claude Code June 2026 limits) â”€â”€â”€â”€â”€
 const MAX_CONCURRENT_AGENTS = 16
 const MAX_TOTAL_AGENTS_PER_WORKFLOW = 1000
 const MAX_WORKFLOW_SCRIPT_ITEMS = 4096
 let totalAgentsSpawned = 0 // reset per workflow run
 
-// ─── Types ───────────────────────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface WorkflowMeta {
   name: string
@@ -58,7 +58,7 @@ interface WorkflowRun {
   stateDir: string
 }
 
-// ─── Workflow Script Parser ─────────────────────────────────
+// â”€â”€â”€ Workflow Script Parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function parseWorkflowScript(script: string, args: any): { meta: WorkflowMeta | null; steps: WorkflowStep[]; errors: string[] } {
   const errors: string[] = []
@@ -156,7 +156,7 @@ function parseWorkflowScript(script: string, args: any): { meta: WorkflowMeta | 
       }
 
       case "agent": {
-        // Extract the agent call — can be multi-line
+        // Extract the agent call â€” can be multi-line
         const slice = body.slice(call.startIndex)
         const agentMatch = slice.match(/agent\s*\(\s*['"`]([^'"]+)['"`]\s*(?:,\s*\{([^}]*)\})?\s*\)/)
         if (agentMatch) {
@@ -242,7 +242,7 @@ function parseWorkflowScript(script: string, args: any): { meta: WorkflowMeta | 
   return { meta, steps, errors }
 }
 
-// ─── Workflow State Management ───────────────────────────────
+// â”€â”€â”€ Workflow State Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const RUNS_DIR = ".opencode/runtime/workflows"
 
@@ -269,11 +269,11 @@ async function listRuns(stateDir: string): Promise<string[]> {
   } catch { return [] }
 }
 
-// ─── Plugin ──────────────────────────────────────────────────
+// â”€â”€â”€ Plugin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const UltracodeRuntime: Plugin = async ({ directory }) => {
 
-  // ─── Helper: Get the current step the model should execute ──
+  // â”€â”€â”€ Helper: Get the current step the model should execute â”€â”€
   function getCurrentStep(run: WorkflowRun): { step: WorkflowStep | null; progress: string } {
     // Find the first pending step
     for (let i = run.currentStepIndex; i < run.steps.length; i++) {
@@ -285,14 +285,14 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
     return { step: null, progress: `${run.steps.length}/${run.steps.length} steps (100%)` }
   }
 
-  // ─── Helper: Build next-step instruction text ──
+  // â”€â”€â”€ Helper: Build next-step instruction text â”€â”€
   function buildStepInstruction(run: WorkflowRun, step: WorkflowStep): string {
     const { progress } = getCurrentStep(run)
     const completedSteps = run.steps.filter(s => s.status === "completed" || s.status === "skipped").length
     const totalSteps = run.steps.length
     const doneSteps = run.steps.filter(s => s.status === "completed").length
 
-    let instruction = `═══ WORKFLOW: ${run.meta.name} ═══\n`
+    let instruction = `â•â•â• WORKFLOW: ${run.meta.name} â•â•â•\n`
     instruction += `Run: ${run.id} | Phase: ${step.phase || step.label || "unknown"}\n`
     instruction += `Progress: ${doneSteps}/${totalSteps} completed (${Math.round(doneSteps / totalSteps * 100)}%)\n\n`
 
@@ -335,11 +335,11 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         instruction += `Call workflow_complete_step to continue.`
     }
 
-    instruction += `\n\n═══ ORIGINAL SCRIPT CONTEXT ═══\n`
+    instruction += `\n\nâ•â•â• ORIGINAL SCRIPT CONTEXT â•â•â•\n`
     instruction += `Workflow: ${run.meta.name}\n`
     instruction += `Description: ${run.meta.description}\n`
     if (run.meta.phases && run.meta.phases.length > 0) {
-      instruction += `Phases: ${run.meta.phases.map(p => p.title).join(" → ")}\n`
+      instruction += `Phases: ${run.meta.phases.map(p => p.title).join(" â†’ ")}\n`
     }
 
     // Show upcoming steps for awareness
@@ -359,14 +359,14 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
 
   return {
     tool: {
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // execute_workflow_script: Parse + create state machine
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       execute_workflow_script: tool({
         description:
           "Parses a workflow script (agent, parallel, pipeline, phase, log) and creates " +
           "a deterministic execution plan. After calling this, loop: " +
-          "workflow_next_step → do the work → workflow_complete_step.",
+          "workflow_next_step â†’ do the work â†’ workflow_complete_step.",
         args: {
           script: tool.schema.string().describe(
             "JavaScript workflow script. Must begin with export const meta = {name, description, phases}. " +
@@ -411,27 +411,27 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
 
           return {
             output: [
-              `═══ ULTRACODE WORKFLOW: ${run.meta.name} ═══\n`,
+              `â•â•â• ULTRACODE WORKFLOW: ${run.meta.name} â•â•â•\n`,
               `Run ID: ${run.id}`,
               `Total steps: ${run.steps.length}`,
-              `Phases: ${run.meta.phases?.map(p => p.title).join(" → ") || "none"}`,
+              `Phases: ${run.meta.phases?.map(p => p.title).join(" â†’ ") || "none"}`,
               `Progress: ${progress}\n`,
               `The plan has been saved. Now call workflow_next_step to get the first step to execute.`,
-              `\nPattern: workflow_next_step() → execute → workflow_complete_step(result) → repeat.`,
+              `\nPattern: workflow_next_step() â†’ execute â†’ workflow_complete_step(result) â†’ repeat.`,
             ].join("\n")
           }
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // execute_workflow_runner: SPAWNS REAL AGENTS via CLI
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       execute_workflow_runner: tool({
         description:
           "DELEGATES a workflow script to the ULTRACODE WORKFLOW RUNNER which " +
           "spawns REAL agents via 'opencode run'. Supports true parallel execution, " +
           "budget tracking, cache hits, and schema validation. " +
-          "This is the REAL execution engine — not a planner.",
+          "This is the REAL execution engine â€” not a planner.",
         args: {
           script: tool.schema.string().describe(
             "JavaScript workflow script. Must begin with export const meta = {...}. " +
@@ -450,7 +450,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           if (!args.skip_cost_gate && stepCount > 5) {
             const estimatedCost = stepCount * 15000 // rough estimate: ~15K tokens per agent
             return {
-              output: `⚠️ COST GATE: This workflow has ${stepCount} steps, estimated ~${Math.round(estimatedCost / 1000)}K tokens.\n` +
+              output: `âš ï¸ COST GATE: This workflow has ${stepCount} steps, estimated ~${Math.round(estimatedCost / 1000)}K tokens.\n` +
                 `With ${args.model || "current model"} at xhigh effort this could be significant.\n\n` +
                 `To proceed, re-run with skip_cost_gate: true.\n` +
                 `To estimate first, run a smaller slice (fewer steps/files).\n\n` +
@@ -478,7 +478,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             budget: { total: args.budget > 0 ? args.budget : null },
           }
 
-          // Map script steps to runner steps (simplified — we reuse parseWorkflowScript's step structure)
+          // Map script steps to runner steps (simplified â€” we reuse parseWorkflowScript's step structure)
           for (const step of parsed.steps) {
             if (step.type === "agent") {
               workflowDef.steps.push({
@@ -545,7 +545,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
 
             // Build output summary
             const summaryLines = [
-              `═══ WORKFLOW EXECUTED: ${parsed.meta.name} ═══`,
+              `â•â•â• WORKFLOW EXECUTED: ${parsed.meta.name} â•â•â•`,
               `Status: ${result.status}`,
               `Steps: ${result.completedSteps}/${result.steps}`,
               `Failed: ${result.failedSteps}`,
@@ -564,15 +564,15 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
               if (r.type === "phase") {
                 summaryLines.push(`[PHASE] ${r.label}`)
               } else if (r.type === "agent") {
-                const status = r.failed ? "❌" : r.cached ? "⚡" : "✅"
+                const status = r.failed ? "âŒ" : r.cached ? "âš¡" : "âœ…"
                 const outputPreview = (r.output || "").slice(0, 150).replace(/\n/g, " ")
                 summaryLines.push(`  ${status} ${r.label}: ${outputPreview}${r.output?.length > 150 ? "..." : ""}`)
               } else if (r.type === "parallel") {
                 const succeeded = r.agents?.filter((a: any) => !a.failed).length || 0
                 const total = r.agents?.length || 0
-                summaryLines.push(`  🔄 [Parallel] ${succeeded}/${total} agents`)
+                summaryLines.push(`  ðŸ”„ [Parallel] ${succeeded}/${total} agents`)
                 for (const a of r.agents || []) {
-                  const st = a.failed ? "❌" : "✅"
+                  const st = a.failed ? "âŒ" : "âœ…"
                   summaryLines.push(`     ${st} ${a.label}: ${(a.output || "").slice(0, 100).replace(/\n/g, " ")}`)
                 }
               }
@@ -595,16 +595,16 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
 
             return {
               output: `WORKFLOW RUNNER FAILED:\n${err.message?.slice(0, 500) || "Unknown error"}\n\n` +
-                `The runner may have timed out (${workflowDef.steps.length} steps × 2 min).\n` +
+                `The runner may have timed out (${workflowDef.steps.length} steps Ã— 2 min).\n` +
                 `For large workflows, use the step-by-step workflow_next_step approach instead.`
             }
           }
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // workflow_next_step: Get the next step to execute
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       workflow_next_step: tool({
         description:
           "Gets the NEXT pending step from the current workflow. Returns the agent prompt " +
@@ -624,7 +624,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             run.status = "completed"
             run.completedAt = new Date().toISOString()
             await saveRun(run)
-            return { output: `═══ WORKFLOW COMPLETE ═══\nAll ${run.steps.length} steps done. Finalize the task.` }
+            return { output: `â•â•â• WORKFLOW COMPLETE â•â•â•\nAll ${run.steps.length} steps done. Finalize the task.` }
           }
 
           // Mark as in_progress
@@ -643,9 +643,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // workflow_complete_step: Record result, advance
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       workflow_complete_step: tool({
         description:
           "Records the result of the current step and advances to the next one. " +
@@ -663,7 +663,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             run.status = "completed"
             run.completedAt = new Date().toISOString()
             await saveRun(run)
-            return { output: `═══ WORKFLOW SKIPPED ═══\nMarked "${run.meta.name}" as complete (skipped remaining steps).` }
+            return { output: `â•â•â• WORKFLOW SKIPPED â•â•â•\nMarked "${run.meta.name}" as complete (skipped remaining steps).` }
           }
 
           // Mark current step as completed
@@ -694,7 +694,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             // Build completion summary
             const completedAgents = run.steps.filter(s => s.type === "agent" && s.status === "completed").length
             return {
-              output: `═══ WORKFLOW COMPLETE ═══\n` +
+              output: `â•â•â• WORKFLOW COMPLETE â•â•â•\n` +
                 `"${run.meta.name}" finished.\n` +
                 `Completed ${run.steps.length} steps (${completedAgents} agents).\n` +
                 `Synthesize results and present your final report.`
@@ -709,18 +709,18 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             run.status = "completed"
             run.completedAt = new Date().toISOString()
             await saveRun(run)
-            return { output: `═══ WORKFLOW COMPLETE ═══\nSynthesize and present final results.` }
+            return { output: `â•â•â• WORKFLOW COMPLETE â•â•â•\nSynthesize and present final results.` }
           }
 
           return {
-            output: `Step completed. Next step → call workflow_next_step("${args.run_id}") to get it.\nProgress: ${progress}`
+            output: `Step completed. Next step â†’ call workflow_next_step("${args.run_id}") to get it.\nProgress: ${progress}`
           }
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // Workflow management
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       list_workflow_runs: tool({
         description: "Lists all workflow run IDs and their status.",
         args: {},
@@ -733,7 +733,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             const run = await loadRun(directory, id)
             if (!run) continue
             const done = run.steps.filter(s => s.status === "completed").length
-            lines.push(`${run.id}: "${run.meta.name}" — ${run.status} (${done}/${run.steps.length} steps)`)
+            lines.push(`${run.id}: "${run.meta.name}" â€” ${run.status} (${done}/${run.steps.length} steps)`)
           }
           return { output: `Workflow runs:\n${lines.join("\n")}` }
         },
@@ -758,7 +758,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           detail += `\nSteps:\n`
           for (let i = 0; i < run.steps.length; i++) {
             const s = run.steps[i]
-            const icon = s.status === "completed" ? "✅" : s.status === "in_progress" ? "▶" : s.status === "pending" ? "⏳" : "⏭"
+            const icon = s.status === "completed" ? "âœ…" : s.status === "in_progress" ? "â–¶" : s.status === "pending" ? "â³" : "â­"
             detail += `  ${icon} [${i}] ${s.type}: ${s.label}\n`
           }
 
@@ -766,9 +766,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // parallel_execute: TRUE concurrent agent execution
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       parallel_execute: tool({
         description:
           "REAL parallel execution: executes multiple agent prompts concurrently. " +
@@ -785,7 +785,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           const errors: string[] = []
           const startTime = Date.now()
 
-          // Accept both prompts[] and single prompt — robust null/undefined handling
+          // Accept both prompts[] and single prompt â€” robust null/undefined handling
           const promptArray = (args.prompts || [])
           const prompts = Array.isArray(promptArray) && promptArray.length > 0
             ? promptArray
@@ -813,20 +813,20 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           return {
             output: `PARALLEL_EXECUTE: ${args.prompts.length} concurrent agents\n\n` +
               results.join("\n") +
-              `\n\n═══ EXECUTION INSTRUCTION ═══\n` +
+              `\n\nâ•â•â• EXECUTION INSTRUCTION â•â•â•\n` +
               `1. Execute ALL ${args.prompts.length} agents above CONCURRENTLY using the agent tool\n` +
-              `2. Each agent must run independently — do one, then the next is NOT concurrent\n` +
+              `2. Each agent must run independently â€” do one, then the next is NOT concurrent\n` +
               `3. Use fan_out if available for true parallelism\n` +
               `4. Collect ALL results before proceeding\n` +
               `5. If any agent fails, continue with the rest\n` +
-              `6. Report COMBINED results — all agents' outputs together`
+              `6. Report COMBINED results â€” all agents' outputs together`
           }
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // structured_output: Enforced JSON schema output
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       structured_output: tool({
         description:
           "Executes a prompt and FORCES the output to match a JSON schema. " +
@@ -846,7 +846,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           // Build a validation wrapper around the prompt
           const schemaDesc = parsedSchema?.properties
             ? Object.entries(parsedSchema.properties)
-                .map(([key, val]: [string, any]) => `  - "${key}": ${val.type || "any"}${val.description ? ` — ${val.description}` : ""}`)
+                .map(([key, val]: [string, any]) => `  - "${key}": ${val.type || "any"}${val.description ? ` â€” ${val.description}` : ""}`)
                 .join("\n")
             : args.schema
 
@@ -858,7 +858,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             `Required fields:\n${schemaDesc}\n\n` +
             (args.instructions ? `Additional instructions:\n${args.instructions}\n\n` : "") +
             `## RULES\n` +
-            `1. Output ONLY the JSON object — no markdown, no explanation, no code fences\n` +
+            `1. Output ONLY the JSON object â€” no markdown, no explanation, no code fences\n` +
             `2. Every field MUST match its specified type\n` +
             `3. If you cannot determine a value, use null (not undefined)\n` +
             `4. Arrays must contain elements of the specified type\n` +
@@ -874,9 +874,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // Budget tracking with real token estimation
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       set_budget: tool({
         description: "Sets a token budget for the current session. Counts ~4 chars per token automatically.",
         args: {
@@ -915,7 +915,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             return {
               output: `Budget: ${total ? total.toLocaleString() : "unlimited"} total\n` +
                 `Spent: ~${spent.toLocaleString()} tokens (${(spent * 4 / 1000).toFixed(0)}K chars)\n` +
-                `Remaining: ${total ? remaining.toLocaleString() + " tokens" : "∞"}\n` +
+                `Remaining: ${total ? remaining.toLocaleString() + " tokens" : "âˆž"}\n` +
                 `Usage: ${total ? (spent / total * 100).toFixed(1) + "%" : "N/A"}`
             }
           } catch {
@@ -924,9 +924,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // Resume with cache hit detection
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       resume_workflow_run: tool({
         description:
           "Resumes a workflow run with CACHE HIT detection. " +
@@ -952,7 +952,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
               .slice(-3) // last 3 for context
             cacheInfo = `\nCACHE HITS: ${cached} steps have cached results. Skipping re-execution.\n`
             for (const c of cachedResults) {
-              cacheInfo += `  ✅ ${c.type} "${c.label}": ${(c.result || "").slice(0, 150)}\n`
+              cacheInfo += `  âœ… ${c.type} "${c.label}": ${(c.result || "").slice(0, 150)}\n`
             }
           }
 
@@ -963,9 +963,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         },
       }),
 
-      // ═════════════════════════════════════════════════
-      // Quality Patterns (refined — they now return instructions the model follows)
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+      // Quality Patterns (refined â€” they now return instructions the model follows)
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       adversarial_verify: tool({
         description: "Spawns N independent skeptics to refute a claim. Kill if >=majority refute.",
         args: {
@@ -1006,7 +1006,7 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
       }),
 
       completeness_critic: tool({
-        description: "Critically analyzes what's missing — unverified claims, unexamined areas.",
+        description: "Critically analyzes what's missing â€” unverified claims, unexamined areas.",
         args: {
           work_done: tool.schema.string().describe("Summary of what's been done"),
           task: tool.schema.string().describe("Original task description"),
@@ -1040,17 +1040,17 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
               `1. Execute the finder task\n` +
               `2. Collect all findings\n` +
               `3. Dedup against ALL previously seen findings (not just confirmed ones)\n` +
-              `4. If NEW items found → reset empty counter → continue\n` +
-              `5. If NO new items → increment empty counter\n` +
+              `4. If NEW items found â†’ reset empty counter â†’ continue\n` +
+              `5. If NO new items â†’ increment empty counter\n` +
               `6. Stop when empty counter >= ${args.consecutive_dry} or rounds >= ${args.max_rounds}\n` +
               `7. Report all unique findings discovered.`
           }
         },
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // MCPTool: Query MCP servers from workflows
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       mcp_query: tool({
         description:
           "Queries an MCP (Model Context Protocol) server for tools or resources. " +
@@ -1087,9 +1087,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // LSPTool: Language Server Protocol queries
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       lsp_query: tool({
         description:
           "Queries a Language Server for code intelligence: diagnostics, type info, references. " +
@@ -1116,9 +1116,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // SleepTool: Wait/sleep for timing
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       sleep: tool({
         description:
           "Waits for a specified duration. Use to delay between operations, " +
@@ -1138,19 +1138,19 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // ToolSearchTool: Discover available tools dynamically
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       tool_search: tool({
         description:
           "Searches for available tools by keyword or category. " +
           "Use when you need to find the right tool for a task. " +
           "Equivalent to Claude Code's ToolSearchTool.",
         args: {
-          query: tool.schema.string().describe("Search query — tool name, category, or description keyword"),
+          query: tool.schema.string().describe("Search query â€” tool name, category, or description keyword"),
         },
         async execute(args, context) {
-          // Inline tool registry — all tools we define across plugins
+          // Inline tool registry â€” all tools we define across plugins
           const allTools: Record<string, string> = {
             // Harness (harness.ts)
             toggle_plan_mode: "Toggle plan mode (read-only research mode)",
@@ -1278,6 +1278,13 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
             report_generate: "Generate full prediction report",
             report_view: "View a generated report",
             report_chat: "Interactive Q&A on a report",
+            // Hooks (hooks.ts)
+            dispatch_agents: "Dispatch parallel background agents",
+            discipline_agents: "Route tasks by discipline/model",
+            ast_grep: "Structural code search (AST, not regex)",
+            recover_session: "Recover session from crash checkpoint",
+            check_comments: "Detect AI slop comments",
+            inject_readme: "Inject project README context",
             // Simulation watch (simulation-watch.ts)
             sim_status: "Live simulation status",
             sim_timeline: "Round-by-round debate timeline",
@@ -1315,9 +1322,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // BriefTool: Session context summary
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       brief: tool({
         description:
           "Provides a concise summary of the current session context: " +
@@ -1332,16 +1339,16 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
           return {
             output: `Session Brief${topic ? ` (focused on: ${topic})` : ""}\n\n` +
               `This is a ULTRACODE session with deterministic enforcement gates.\n` +
-              `All 5 gates active: classify_task, verify, fan_out, adversarial_review (×2).\n` +
+              `All 5 gates active: classify_task, verify, fan_out, adversarial_review (Ã—2).\n` +
               `${topic ? `\nFocus: ${topic}\nUse classify_task to analyze this topic.` : ""}\n` +
               `Available: 82+ tools across 12 plugins, 9 slash commands.`
           }
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // McpAuthTool: MCP server authentication
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       mcp_auth: tool({
         description:
           "Authenticates with an MCP (Model Context Protocol) server. " +
@@ -1370,9 +1377,9 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
         }
       }),
 
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // AgentView: Real-time agent monitoring dashboard
-      // ═════════════════════════════════════════════════
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       agent_view: tool({
         description:
           "Shows a real-time dashboard of all active agents, their status, recent activity, " +
@@ -1419,15 +1426,17 @@ export const UltracodeRuntime: Plugin = async ({ directory }) => {
       }),
     },
 
-    // ─── Compaction ─────────────────────────────────
+    // â”€â”€â”€ Compaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     "experimental.session.compacting": async (_input, output) => {
       output.context.push(
         `## Ultracode Workflow Runtime\n` +
-        `Workflow execution uses a state machine: execute_workflow_script → ` +
-        `loop { workflow_next_step → execute → workflow_complete_step }.\n` +
+        `Workflow execution uses a state machine: execute_workflow_script â†’ ` +
+        `loop { workflow_next_step â†’ execute â†’ workflow_complete_step }.\n` +
         `Active runs tracked in .opencode/runtime/workflows/. ` +
         `Use list_workflow_runs, get_workflow_run, resume_workflow_run.`
       )
     },
   }
 }
+
+

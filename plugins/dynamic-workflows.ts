@@ -1,7 +1,8 @@
-import type { Plugin } from "@opencode-ai/plugin"
+﻿import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { readFile } from "fs/promises"
-
+import { readFile, writeFile } from "fs/promises"
+import { readFileSync, writeFileSync, mkdirSync } from "fs"
+import { createHash } from "crypto"
 export const DynamicWorkflows: Plugin = async ({ client, $, directory }) => {
 
   return {
@@ -193,6 +194,43 @@ export const DynamicWorkflows: Plugin = async ({ client, $, directory }) => {
           }
         }
       }),
+      // Ralph Loop
+      ralph_loop: tool({
+        description: "Self-referential loop persisting state until completion. Each iteration self-corrects. Resume across interruptions.",
+        args: {
+          task: tool.schema.string().describe("Task to complete"),
+          completion_criteria: tool.schema.array(tool.schema.string()).describe("Conditions").optional().default([]),
+          max_cycles: tool.schema.number().describe("Safety limit").optional().default(10),
+        },
+        async execute(args) {
+          const hash = createHash("sha256").update(args.task).digest("hex").slice(0,8)
+          const stateFile = directory + "/.opencode/runtime/ralph/" + hash + ".json"
+          mkdirSync(directory + "/.opencode/runtime/ralph", { recursive: true })
+          let state = { task: args.task, cycles: 0, findings: [], completed: false }
+          try { state = JSON.parse(readFileSync(stateFile, "utf8")) } catch {}
+          if (state.completed) return { output: "RALPH LOOP DONE: " + state.cycles + " cycles, " + state.findings.length + " findings." }
+          state.cycles++
+          if (state.cycles > (args.max_cycles || 10)) return { output: "RALPH LOOP STOPPED: max cycles.\n" + state.findings.join("\n") }
+          writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8")
+          return { output: "RALPH LOOP (" + state.cycles + "/" + (args.max_cycles||10) + ")\nContinuar loop. Report findings. State saved.\nFile: " + stateFile }
+        }
+      }),
+      // IntentGate
+      analyze_intent: tool({
+        description: "Analyzes user intent: true goal, implied intent, actual need vs literal.",
+        args: { request: tool.schema.string().describe("User request"), context: tool.schema.string().describe("Context").optional().default("") },
+        async execute(args) { return { output: "INTENT ANALYSIS\nRequest: " + args.request + "\n\nDetermine: true goal, implied intent, actual need vs asked, missing context, classification, confidence." } }
+      }),
+      // Hyperplan
+      hyperplan: tool({
+        description: "5 hostile agents critique from orthogonal angles.",
+        args: { plan: tool.schema.string().describe("Plan to critique") },
+        async execute(args) {
+          const s = ["OPTIMIST: Best case?","PESSIMIST: Worst case?","CONTRARIAN: Opposite approach?","RISK-ANALYST: Risk scores?","EDGE-CASE: Race conditions?"]
+          return { output: "HYPERPLAN\nPlan: " + args.plan.slice(0,1500) + "\n\n" + s.join("\n\n") + "\n\nSynthesize final recommendation." }
+        }
+      }),
     }
   }
 }
+
