@@ -565,7 +565,9 @@ export const HarnessPlugin: Plugin = async ({ directory }) => {
       }
 
       // ════════════════════════════════════════════════════
-      // GATE 2: Verification after edits — Guide 3x, then force redirect
+      // GATE 2: Verification Convergence — Guide 3x, then force redirect
+      // Verifies ONCE per edit cycle. Does NOT clear pendingVerification
+      // until verification PASSES. Keeps re-verifying after every fix attempt.
       // ════════════════════════════════════════════════════
       if (pendingVerification && (input.tool === "edit" || input.tool === "write")) {
         verifyGuideCount++
@@ -574,18 +576,19 @@ export const HarnessPlugin: Plugin = async ({ directory }) => {
         } else {
           // FORCE: Auto-execute verification with real npx tsc
           const file = unverifiedEdits[unverifiedEdits.length - 1]?.file || "unknown"
-          pendingVerification = false
-          unverifiedEdits = []
           const ext = file.split(".").pop()?.toLowerCase() || ""
           let result = ""
+          let verifiedOk = false
           if (["ts", "tsx", "js", "jsx"].includes(ext)) {
             try {
               const r = Bun.spawnSync(["npx", "tsc", "--noEmit"], { shell: true })
               result = (r.stdout?.toString() || "").slice(0, 500) || (r.stderr?.toString() || "").slice(0, 500) || "OK (no output)"
+              verifiedOk = r.exitCode === 0
             } catch {
               try {
                 const r = Bun.spawnSync(["tsc", "--noEmit"], { shell: true })
                 result = (r.stdout?.toString() || "").slice(0, 500) || (r.stderr?.toString() || "").slice(0, 500) || "OK"
+                verifiedOk = r.exitCode === 0
               } catch (e: any) {
                 result = `tsc not found: ${e.message?.slice(0, 200) || "unknown"}`
               }
@@ -594,18 +597,38 @@ export const HarnessPlugin: Plugin = async ({ directory }) => {
             try {
               const r = Bun.spawnSync(["python", "-m", "py_compile", file])
               result = (r.stderr?.toString() || "").slice(0, 500) || "OK"
+              verifiedOk = r.exitCode === 0
             } catch (e: any) {
               result = `py_compile: ${e.message?.slice(0, 200) || "failed"}`
             }
           } else {
             result = "verified (no specific checker for this extension)"
+            verifiedOk = true
           }
-          markChecklist("verification", "auto-executed", `file=${file}, result=${result.slice(0, 100)}`)
-          throw new Error(
-            `[AUTO] Verification EXECUTED on ${file}.\n` +
-            `Result: ${result.slice(0, 500)}\n\n` +
-            `Continue.`
-          )
+
+          if (verifiedOk) {
+            // Verification PASSED — clear pending flag and reset guide counter
+            pendingVerification = false
+            unverifiedEdits = []
+            verifyGuideCount = 0
+            markChecklist("verification", "passed", `file=${file}`)
+            throw new Error(
+              `[AUTO] Verification PASSED on ${file}.\n` +
+              `Result: ${result.slice(0, 500)}\n\n` +
+              `Continue.`
+            )
+          } else {
+            // Verification FAILED — keep pendingVerification=true so it fires again
+            // Reset verifyGuideCount so the next 3 edits are guided, not forced
+            verifyGuideCount = Math.max(0, GUIDE_LIMIT - 1) // Next edit triggers guide, not force (1/n)
+            markChecklist("verification", "failed", `file=${file}, result=${result.slice(0, 100)}`)
+            throw new Error(
+              `[AUTO] Verification FAILED on ${file}.\n` +
+              `Result: ${result.slice(0, 500)}\n\n` +
+              `FIX the compilation errors above. Verification will re-check on your next edit.\n` +
+              `Do NOT proceed until verification passes.`
+            )
+          }
         }
       }
 

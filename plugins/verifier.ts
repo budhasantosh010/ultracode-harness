@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
+import { readFileSync, writeFileSync, existsSync } from "fs"
 
 const CHECK_COMMANDS: Record<string, string> = {
   ts: "npx tsc --noEmit",
@@ -12,9 +13,13 @@ const CHECK_COMMANDS: Record<string, string> = {
 // Checks that target a single file (others run project-wide).
 const PER_FILE_CHECKS = new Set(["js", "py"])
 
+// Self-healing: max converge attempts for compilation fixes
+const MAX_CONVERGE_LOOPS = 5
+
+// Track convergence state per file (avoid infinite loops)
+const convergeTracker: Record<string, { attempts: number; lastError: string }> = {}
+
 // Best-effort outcome extraction from a `tool.execute.after` output object.
-// OpenCode's hook provides { title, output, metadata }; the exit code (when
-// present) lives in metadata, and the textual output in `output`.
 function readBashOutcome(output: any): { exitCode: number | undefined; text: string } {
   const meta = output?.metadata ?? {}
   const exitCode =
@@ -32,7 +37,7 @@ export const VerifierPlugin: Plugin = async () => {
 
   return {
     "tool.execute.after": async (input, output) => {
-      // ─── Compilation Check after edit/write ─────────
+      // ─── Self-Healing Compilation Check after edit/write ─────────
       if (input.tool === "edit" || input.tool === "write") {
         const filePath = (input.args?.filePath || input.args?.path || "").toString()
         const ext = filePath.split(".").pop()?.toLowerCase()
@@ -51,7 +56,6 @@ export const VerifierPlugin: Plugin = async () => {
             })
           } catch (err: any) {
             const out = ((err.stdout?.toString() || "") + (err.stderr?.toString() || "")).trim()
-            // Distinguish "check tool not installed" from a real failure.
             const toolMissing =
               err?.code === "ENOENT" || err?.status === 127 || err?.status === 9009 ||
               /is not recognized as an internal|command not found/i.test(out)
@@ -59,10 +63,64 @@ export const VerifierPlugin: Plugin = async () => {
           }
 
           if (report.trim()) {
-            output.output =
-              `${output.output || ""}\n\n[verifier] COMPILATION ERROR in ${filePath}:\n` +
-              `${report.trim().slice(0, 1000)}\n` +
-              `FIX THIS ERROR before doing anything else. Do not proceed until the code compiles cleanly.`
+            // ── SELF-HEALING: Auto-fix compilation errors via converge loop ──
+            const errorKey = filePath
+            const currentError = report.trim().slice(0, 1000)
+
+            // Track attempts for this file
+            if (!convergeTracker[errorKey]) {
+              convergeTracker[errorKey] = { attempts: 0, lastError: "" }
+            }
+            const tracker = convergeTracker[errorKey]
+            tracker.attempts++
+            tracker.lastError = currentError
+
+            // Report compilation error
+            let verifierMsg = `[verifier] COMPILATION ERROR in ${filePath}:\n${currentError}\n`
+
+            // Auto-fix via converge loop (only if not exceeded max attempts)
+            if (tracker.attempts <= MAX_CONVERGE_LOOPS) {
+              let fixSuccess = false
+              let fixedByAgent = false
+
+              try {
+                // Spawn fix sub-agent via opencode run
+                const fixPrompt = `Fix this compilation error in ${filePath}.\n\nError:\n${currentError}\n\nRead the file, fix the error, and confirm it compiles. Fix ONLY the error — do not change functionality. Keep the fix minimal.`
+                execSync(`opencode run "${fixPrompt.replace(/"/g, '\\"')}" --pure --format default`, {
+                  encoding: "utf8",
+                  timeout: 60000,
+                  maxBuffer: 10 * 1024 * 1024,
+                })
+                fixedByAgent = true
+
+                // Re-check compilation after fix agent
+                try {
+                  execSync(fullCmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 60000, maxBuffer: 10 * 1024 * 1024 })
+                  fixSuccess = true
+                } catch { /* still fails, will check on next edit */ }
+              } catch { /* agent spawning failed, fall through */ }
+
+              if (fixSuccess) {
+                verifierMsg += `✅ [Self-Healing] Auto-fixed compilation error (attempt ${tracker.attempts}/${MAX_CONVERGE_LOOPS}).\n`
+                // Reset tracker on success
+                delete convergeTracker[errorKey]
+              } else {
+                const remaining = MAX_CONVERGE_LOOPS - tracker.attempts
+                if (remaining > 0) {
+                  verifierMsg += `🔄 [Self-Healing] Attempted fix but error persists (${tracker.attempts}/${MAX_CONVERGE_LOOPS}). ${fixedByAgent ? "Fix agent ran — the model should check the file." : "Will retry on next edit."}\n`
+                } else {
+                  verifierMsg += `⚠️ [Self-Healing] Max converge attempts (${MAX_CONVERGE_LOOPS}) reached for this file. Manual fix required.\n`
+                }
+              }
+            } else {
+              verifierMsg += `⚠️ Max converge attempts (${MAX_CONVERGE_LOOPS}) reached. Manual fix required.\n`
+            }
+
+            verifierMsg += `Do not proceed until the code compiles cleanly.`
+            output.output = `${output.output || ""}\n\n${verifierMsg}`
+          } else {
+            // Compilation OK — reset converge tracker for this file
+            delete convergeTracker[filePath]
           }
         }
       }

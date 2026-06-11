@@ -306,14 +306,32 @@ export const HooksPlugin: Plugin = async ({ directory }) => {
         }
       }
 
-      // â”€â”€â”€ EMPTY TASK DETECTOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // â”€â”€â”€ EMPTY TASK DETECTOR + AUTO-RETRY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (input.tool === "bash" || input.tool === "agent" || input.tool === "rlm_query") {
         if (!outputStr || outputStr.trim().length < 10) {
           emptyResponseCount++
           if (emptyResponseCount >= 3) {
             emptyResponseCount = 0
             const outRef = output as any
-            outRef.output = (outRef.output || "") + "\n\n[Empty Response Detector] Agent returned empty/insufficient response. Retrying with more specific instructions."
+            // Actual auto-retry: re-invoke with more specific instructions
+            let retryResult = ""
+            const lastCmd = (input.args?.command || input.args?.task || "").toString()
+            try {
+              const retry = execSync(
+                `opencode run "The previous response was empty or incomplete. Retry this task with more detail and specificity: ${lastCmd.replace(/"/g, '\\"').slice(0, 200)}" --pure --format default`,
+                { encoding: "utf8", timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+              )
+              retryResult = retry.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "").trim().slice(0, 2000)
+            } catch { retryResult = "Auto-retry failed." }
+
+            if (retryResult && retryResult !== "Auto-retry failed.") {
+              outRef.output = (outRef.output || "") +
+                `\n\n[Empty Response Detector] Agent returned empty response. Auto-retry result:\n${retryResult}`
+            } else {
+              outRef.output = (outRef.output || "") +
+                `\n\n[Empty Response Detector] Agent returned empty response (3x). Auto-retry also failed. ` +
+                `Simplify the request or check if the model is overloaded.`
+            }
           }
         } else {
           emptyResponseCount = 0
