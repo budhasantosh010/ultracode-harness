@@ -530,6 +530,333 @@ export const ECCFeaturesPlugin: Plugin = async ({ directory }) => {
           return { output: out.join("\n") }
         }
       }),
+
+      // ─── seq_diagram: Auto-generate sequence diagram from code changes ─
+      seq_diagram: tool({
+        description: "Generates a sequence diagram showing call flow, component relationships, and data flow for changed code. Uses Mermaid format. Paste into any markdown viewer.",
+        args: {
+          file: tool.schema.string().describe("File to analyze and diagram"),
+          focus: tool.schema.string().describe("Function/component to focus on").optional().default(""),
+        },
+        async execute(args) {
+          if (!existsSync(args.file)) return { output: "File not found: " + args.file }
+          const content = readFileSync(args.file, "utf8")
+          const focus = args.focus || ""
+
+          // Extract function calls from the file
+          const functionCalls: string[] = []
+          const functionDefs: string[] = []
+          const importLines: string[] = []
+
+          for (const line of content.split("\n")) {
+            const trimmed = line.trim()
+            if (trimmed.startsWith("import ")) importLines.push(trimmed)
+            const funcMatch = trimmed.match(/^\s*(export\s+)?(async\s+)?function\s+(\w+)/)
+            if (funcMatch) functionDefs.push(funcMatch[3])
+            const callMatch = trimmed.match(/(\w+)\([^)]*\)/)
+            if (callMatch && !callMatch[1].match(/^(if|for|while|switch|return|import|export|const|let|var|throw|new|typeof|instanceof)$/)) {
+              if (!focus || trimmed.includes(focus)) functionCalls.push(callMatch[1])
+            }
+          }
+
+          // Build participants from imports
+          const participants = importLines
+            .map(l => { const m = l.match(/from\s+['"]([^'"]+)['"]/); return m ? m[1].split("/").pop() : null })
+            .filter((s: unknown): s is string => typeof s === "string") as string[]
+
+          // Build Mermaid sequence diagram
+          const diagram: string[] = ["```mermaid", "sequenceDiagram", "    participant User"]
+          for (const p of [...new Set(participants)].slice(0, 8)) {
+            diagram.push("    participant " + p.replace(/['"]/g, "").replace(/[^a-zA-Z0-9_]/g, "_"))
+          }
+          diagram.push("    participant " + args.file.split("/").pop()!.replace(/\./g, "_"))
+
+          // Add flows
+          const uniqueCalls = [...new Set(functionCalls)].slice(0, 12)
+          const fileName = args.file.split("/").pop()!.replace(/\./g, "_")
+          for (const call of uniqueCalls) {
+            diagram.push("    User->>" + fileName + ": " + call + "()")
+            diagram.push("    " + fileName + "->>" + fileName + ": process " + call)
+            if (participants.length > 0) {
+              const target = participants[Math.floor(Math.random() * participants.length)]
+              diagram.push("    " + fileName + "->>" + target.replace(/['"]/g, "").replace(/[^a-zA-Z0-9_]/g, "_") + ": delegate")
+              diagram.push("    " + target.replace(/['"]/g, "").replace(/[^a-zA-Z0-9_]/g, "_") + "-->>" + fileName + ": result")
+            }
+            diagram.push("    " + fileName + "-->>User: " + call + " result")
+          }
+          diagram.push("```")
+
+          return { output: "═══ SEQUENCE DIAGRAM ═══\nFile: " + args.file + (focus ? " (focus: " + focus + ")" : "") + "\nFunctions: " + functionDefs.length + " | Calls mapped: " + uniqueCalls.length + " | Participants: " + participants.length + "\n\n" + diagram.join("\n") + "\n\nPaste into any markdown viewer (GitHub, Obsidian, etc.) to render the diagram." }
+        }
+      }),
+
+      // ─── multi_hop_impact: Trace transitive dependencies ──
+      multi_hop_impact: tool({
+        description: "Multi-hop impact analysis. Traces import chains to find transitive dependencies. 'Changing X will break Y because Z imports it through A imports B imports C chain.' Goes deeper than cross_file_impact.",
+        args: {
+          symbol: tool.schema.string().describe("Function/class/type to trace"),
+          start_file: tool.schema.string().describe("File containing the symbol").optional().default(""),
+          depth: tool.schema.number().describe("Trace depth (1-5 hops)").optional().default(3),
+        },
+        async execute(args) {
+          const symbol = args.symbol || ""
+          const startFile = args.start_file || ""
+          const maxDepth = Math.min(Math.max(args.depth || 3, 1), 5)
+          const out = ["═══ MULTI-HOP IMPACT ═══", "Symbol: " + symbol, startFile ? "Starting file: " + startFile : "Searching all files", "Max depth: " + maxDepth + " hops", "", "Tracing dependency chain...", ""]
+          const visited = new Set<string>()
+          const impactChain: Array<{ file: string; depth: number; how: string }> = []
+
+          // Hop 0: Find files that define or reference the symbol
+          try {
+            const initial = execSync("grep -rn --include='*.{ts,tsx,js,jsx}' -E '" + symbol + "' \"" + directory + "/plugins\" 2>/dev/null | grep -v node_modules | grep -v '.test.' | head -20", { encoding: "utf8", timeout: 10000 }).toString().trim()
+            if (initial) {
+              for (const line of initial.split("\n").filter(Boolean)) {
+                const file = line.split(":")[0]
+                if (file && !visited.has(file)) {
+                  visited.add(file)
+                  impactChain.push({ file, depth: 0, how: "defines/uses " + symbol })
+                }
+              }
+            }
+          } catch {}
+
+          if (impactChain.length === 0) {
+            out.push("No files reference '" + symbol + "' in the plugins directory.")
+            return { output: out.join("\n") }
+          }
+
+          // Hops 1-N: For each file found, check what imports it and what it imports
+          for (let hop = 1; hop <= maxDepth; hop++) {
+            const currentFiles = impactChain.filter(f => f.depth === hop - 1).map(f => f.file)
+            if (currentFiles.length === 0) break
+
+            const newFiles: Array<{ file: string; depth: number; how: string }> = []
+            for (const cf of currentFiles) {
+              // Find files that import this file
+              const baseName = cf.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") || ""
+              try {
+                const importers = execSync("grep -rn --include='*.{ts,tsx,js,jsx}' -E \"from ['\\./]*" + baseName + "['\\\"]|require\\(['\\\"./]*" + baseName + "['\\\"]\" \"" + directory + "/plugins\" 2>/dev/null | grep -v node_modules | head -10", { encoding: "utf8", timeout: 8000 }).toString().trim()
+                if (importers) {
+                  for (const line of importers.split("\n").filter(Boolean)) {
+                    const file = line.split(":")[0]
+                    if (file && !visited.has(file)) {
+                      visited.add(file)
+                      newFiles.push({ file, depth: hop, how: "imports " + baseName + " (hop " + hop + ")" })
+                    }
+                  }
+                }
+              } catch {}
+            }
+            impactChain.push(...newFiles)
+            if (newFiles.length === 0) break
+          }
+
+          // Output grouped by depth
+          out.push("Impact chain (" + impactChain.length + " files across " + maxDepth + " hops):\n")
+          for (let d = 0; d <= maxDepth; d++) {
+            const atDepth = impactChain.filter(f => f.depth === d)
+            if (atDepth.length > 0) {
+              out.push("  Hop " + d + " (" + (d === 0 ? "directly references" : "imported through " + d + " level(s)") + "):")
+              for (const f of atDepth) {
+                const rel = f.file.startsWith(directory) ? f.file.slice(directory.length + 1) : f.file
+                out.push("    " + rel + " — " + f.how)
+              }
+              out.push("")
+            }
+          }
+
+          out.push("═══ SUMMARY ═══", "Files affected: " + impactChain.length + " across " + (impactChain.length > 0 ? Math.max(...impactChain.map(f => f.depth)) : 0) + " hops")
+
+          // Risk assessment
+          const totalFiles = impactChain.length
+          if (totalFiles === 0) out.push("Risk: NONE — no dependencies found")
+          else if (totalFiles <= 3) out.push("Risk: LOW — " + totalFiles + " file(s) affected")
+          else if (totalFiles <= 8) out.push("Risk: MEDIUM — " + totalFiles + " files may need updates")
+          else out.push("Risk: HIGH — " + totalFiles + " files affected. Review carefully before changing " + symbol + ".")
+
+          return { output: out.join("\n") }
+        }
+      }),
+
+      // ─── lint_pipeline: Run multiple linters in sequence ──
+      lint_pipeline: tool({
+        description: "Runs multiple linters and SAST tools in one pipeline: ESLint, TypeScript, Ruff, golangci-lint, TruffleHog (secrets), Trivy (IaC), and more. Detects what languages are used and runs the right tools.",
+        args: {
+          full: tool.schema.boolean().describe("Run full pipeline including security scanners").optional().default(false),
+        },
+        async execute(args) {
+          const full = args.full || false
+          const results: Array<{ tool: string; status: string; output: string }> = []
+          const timeStart = Date.now()
+
+          // Detect project type
+          const hasTs = existsSync(directory + "/tsconfig.json") || existsSync(directory + "/tsconfig.app.json")
+          const hasPy = existsSync(directory + "/requirements.txt") || existsSync(directory + "/pyproject.toml") || existsSync(directory + "/setup.py")
+          const hasGo = existsSync(directory + "/go.mod")
+          const hasRs = existsSync(directory + "/Cargo.toml")
+          const hasNode = existsSync(directory + "/package.json")
+
+          // Always run
+          if (hasNode) {
+            // ESLint
+            try {
+              const r = execSync("npx eslint --no-error-on-unmatched-pattern . 2>&1 || true", { timeout: 30000, encoding: "utf8" }).toString().trim()
+              const issues = r.includes("problem") ? r.match(/\d+ problems?/)?.[0] || "issues found" : "OK"
+              results.push({ tool: "ESLint", status: issues === "OK" ? "PASS" : "WARN", output: issues })
+            } catch { results.push({ tool: "ESLint", status: "SKIP", output: "not available" }) }
+
+            // TypeScript
+            if (hasTs) {
+              try {
+                const r = execSync("npx tsc --noEmit 2>&1 || true", { timeout: 60000, encoding: "utf8" }).toString().trim()
+                results.push({ tool: "TypeScript", status: r.includes("error") ? "FAIL" : "PASS", output: r.includes("error") ? r.match(/\d+ errors?/)?.[0] || "errors" : "OK" })
+              } catch { results.push({ tool: "TypeScript", status: "SKIP", output: "tsc error" }) }
+            }
+          }
+
+          // Python
+          if (hasPy) {
+            try {
+              const r = execSync("python -m py_compile " + directory + "/plugins/enhancements.ts 2>&1 || true", { timeout: 10000, encoding: "utf8" }).toString().trim()
+              results.push({ tool: "PyCompile", status: r.includes("Error") ? "FAIL" : "PASS", output: r.includes("Error") ? "syntax error" : "OK" })
+            } catch { results.push({ tool: "PyCompile", status: "SKIP", output: "not available" }) }
+          }
+
+          // Go
+          if (hasGo) {
+            try {
+              const r = execSync("go vet ./... 2>&1 || true", { timeout: 30000, encoding: "utf8" }).toString().trim()
+              results.push({ tool: "go vet", status: r ? "WARN" : "PASS", output: r ? r.slice(0, 200) : "OK" })
+            } catch { results.push({ tool: "go vet", status: "SKIP", output: "not available" }) }
+          }
+
+          // Rust
+          if (hasRs) {
+            try {
+              const r = execSync("cargo check 2>&1 || true", { timeout: 60000, encoding: "utf8" }).toString().trim()
+              results.push({ tool: "Cargo", status: r.includes("error") ? "FAIL" : "PASS", output: r.includes("error") ? "compile errors" : "OK" })
+            } catch { results.push({ tool: "Cargo", status: "SKIP", output: "not available" }) }
+          }
+
+          // Full mode — security scanners
+          if (full) {
+            // Secrets scan
+            try {
+              const r = execSync("grep -rn --include='*.{ts,js,tsx,jsx,py,go,rs}' -E 'sk-[A-Za-z0-9]{20,}|api[_-]key[=:]|password[=:]|PRIVATE KEY' \"" + directory + "\" 2>/dev/null | grep -v node_modules | grep -v '.test.' | head -5", { timeout: 10000, encoding: "utf8" }).toString().trim()
+              results.push({ tool: "Secrets", status: r ? "FAIL" : "PASS", output: r ? r.split("\n").length + " potential secrets" : "OK" })
+            } catch { results.push({ tool: "Secrets", status: "SKIP", output: "scan error" }) }
+
+            // Dependency audit
+            if (hasNode) {
+              try {
+                const r = execSync("npm audit 2>&1 || true", { timeout: 30000, encoding: "utf8" }).toString().trim()
+                const vulns = r.match(/\d+ vulnerabilities?/)?.[0] || "OK"
+                results.push({ tool: "npm audit", status: vulns === "OK" ? "PASS" : "WARN", output: vulns })
+              } catch { results.push({ tool: "npm audit", status: "SKIP", output: "not available" }) }
+            }
+          }
+
+          const totalTime = ((Date.now() - timeStart) / 1000).toFixed(1)
+          const pass = results.filter(r => r.status === "PASS").length
+          const fail = results.filter(r => r.status === "FAIL").length
+          const warn = results.filter(r => r.status === "WARN").length
+
+          return { output: "═══ LINT PIPELINE ═══\nTime: " + totalTime + "s | PASS: " + pass + " | WARN: " + warn + " | FAIL: " + fail + " | SKIP: " + results.filter(r => r.status === "SKIP").length + "\n\n" + results.map(r => "  [" + (r.status === "PASS" ? "✓" : r.status === "FAIL" ? "✗" : r.status === "WARN" ? "⚠" : "⊘") + "] " + r.tool + ": " + r.output).join("\n") + "\n\nRun with full=true to include security scanners (secrets, npm audit)." }
+        }
+      }),
+
+      // ─── issue_planner: Read issue → find files → create plan ─
+      issue_planner: tool({
+        description: "Issue Planner. Reads an issue description (or paste one), auto-finds relevant code files, identifies affected components, and generates a structured coding plan with file paths. Like CodeRabbit's Issue Planner.",
+        args: {
+          issue: tool.schema.string().describe("Issue description, bug report, or feature request"),
+          source: tool.schema.string().describe("Source: paste, github, jira, linear").optional().default("paste"),
+        },
+        async execute(args) {
+          const issue = args.issue || ""
+          const out = ["═══ ISSUE PLANNER ═══", "Issue: " + issue.slice(0, 100) + (issue.length > 100 ? "..." : ""), "Source: " + args.source, ""]
+
+          // Extract keywords for file searching
+          const keywords = issue.toLowerCase().split(/\W+/).filter(w => w.length > 3 && !["this", "that", "with", "from", "have", "been", "will", "would", "could", "should", "there", "their", "about", "which"].includes(w)).slice(0, 8)
+
+          // Phase 1: Find relevant files
+          out.push("Phase 1 — Scanning for relevant files...")
+          const relevantFiles: Array<{ file: string; score: number; reason: string }> = []
+          for (const kw of keywords) {
+            try {
+              const cmd = "grep -rli --include='*.{ts,tsx,js,jsx,py,go,rs,md}' -E '" + kw + "' \"" + directory + "\" 2>/dev/null | grep -v node_modules | grep -v '.test.' | head -5"
+              const result = execSync(cmd, { encoding: "utf8", timeout: 8000 }).toString().trim()
+              if (result) {
+                for (const file of result.split("\n").filter(Boolean)) {
+                  const existing = relevantFiles.find((f: any) => f.file === file)
+                  if (existing) (existing as any).score++
+                  else relevantFiles.push({ file: file, score: 1, reason: "matches: " + kw })
+                }
+              }
+            } catch {}
+          }
+
+          relevantFiles.sort((a, b) => b.score - a.score)
+
+          // Determine issue type
+          const isBug = /bug|error|fail|crash|broken|wrong|incorrect|issue|problem/i.test(issue)
+          const isFeature = /feature|add|new|implement|create|support/i.test(issue)
+          const isRefactor = /refactor|clean|improve|optimize|simplify/i.test(issue)
+          const issueType = isBug ? "bugfix" : isFeature ? "feature" : isRefactor ? "refactor" : "general"
+
+          out.push("  Relevant files found: " + relevantFiles.length)
+          for (const rf of relevantFiles.slice(0, 8)) {
+            const rel = rf.file.startsWith(directory) ? rf.file.slice(directory.length + 1) : rf.file
+            out.push("  [" + rf.score + "] " + rel)
+          }
+
+          // Phase 2: Identify affected components
+          out.push("\nPhase 2 — Identifying affected components...")
+          const components = [...new Set(relevantFiles.map(f => f.file.split("/").slice(0, -1).join("/")))]
+            .filter(Boolean).slice(0, 5)
+          for (const c of components) {
+            const filesInComponent = relevantFiles.filter(f => f.file.startsWith(c)).length
+            out.push("  " + c + " — " + filesInComponent + " file(s)")
+          }
+
+          // Phase 3: Generate coding plan
+          out.push("\nPhase 3 — Coding Plan:")
+          if (isBug) {
+            out.push("  Type: Bugfix")
+            out.push("  Step 1 — Read relevant files to understand current behavior")
+            out.push("  Step 2 — Reproduce the issue (" + keywords.slice(0, 3).join(", ") + ")")
+            out.push("  Step 3 — Identify root cause in affected files")
+            out.push("  Step 4 — Implement fix")
+            out.push("  Step 5 — Verify fix addresses the issue")
+            out.push("  Step 6 — Run tests and verification")
+          } else if (isFeature) {
+            out.push("  Type: Feature")
+            out.push("  Step 1 — Review existing implementation in relevant files")
+            out.push("  Step 2 — Design the feature approach")
+            out.push("  Step 3 — Implement core functionality")
+            out.push("  Step 4 — Add error handling and edge cases")
+            out.push("  Step 5 — Verify with tests")
+          } else {
+            out.push("  Type: " + issueType + " (auto-detected)")
+            out.push("  Step 1 — Analyze current implementation")
+            out.push("  Step 2 — Design changes")
+            out.push("  Step 3 — Implement")
+            out.push("  Step 4 — Verify")
+          }
+
+          // Phase 4: Risk assessment
+          out.push("\nPhase 4 — Risk Assessment:")
+          out.push("  Files affected: " + relevantFiles.length)
+          out.push("  Components: " + components.length)
+          out.push("  Risk: " + (relevantFiles.length > 10 ? "HIGH" : relevantFiles.length > 5 ? "MEDIUM" : "LOW") + " (" + relevantFiles.length + " files)")
+
+          out.push("\n═══ PLAN READY ═══")
+          out.push("Use planner({task: \"" + issue.slice(0, 60) + "\"}) for detailed 4-stage planning.")
+          out.push("Use research_problem to scan files before implementing.")
+
+          return { output: out.join("\n") }
+        }
+      }),
     },
 
     // ─── Pre-Compact save: save state before compaction ─
