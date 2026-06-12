@@ -27,7 +27,8 @@
     "./plugins/enhancements.ts",
     "./plugins/researcher-loop.ts",
     "./plugins/knowledge.ts",
-    "./plugins/ecc-features.ts"
+    "./plugins/ecc-features.ts",
+    "./plugins/retrieval-engine.ts"
   ],
   "agent": {
     "build": { "steps": 50 },
