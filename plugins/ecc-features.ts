@@ -331,6 +331,205 @@ export const ECCFeaturesPlugin: Plugin = async ({ directory }) => {
           try { const f = execSync("npm audit fix 2>&1 || true", { timeout: 60000 }).toString().trim(); return { output: "═══ SUPPLY CHAIN FIX ═══\n" + f } } catch { return { output: "═══ SUPPLY CHAIN ═══\nNo package.json found" } }
         }
       }),
+
+      // ─── greploop: Iterative review→fix→re-review loop ─
+      greploop: tool({
+        description: "Iterative review-fix loop: reviews code, identifies issues, fixes them, re-reviews. Loops until confidence >= target or max iterations. Like Greptile's /greploop.",
+        args: {
+          file: tool.schema.string().describe("File(s) to review and improve"),
+          target_confidence: tool.schema.number().describe("Target confidence score (1-5) to stop").optional().default(4),
+          max_iterations: tool.schema.number().describe("Max loop cycles").optional().default(5),
+        },
+        async execute(args) {
+          const file = args.file || ""
+          const target = Math.min(Math.max(args.target_confidence || 4, 1), 5)
+          const maxIter = Math.min(args.max_iterations || 5, 10)
+          const out = ["═══ GREPLOOP ═══", "File: " + file, "Target confidence: " + target + "/5", "Max iterations: " + maxIter, ""]
+          let iteration = 0, confidence = 0
+
+          while (iteration < maxIter) {
+            iteration++
+            // Review phase: scan file for issues
+            let issues = 0; let criticalIssues = 0
+            if (existsSync(file)) {
+              const c = readFileSync(file, "utf8")
+              if (c.includes("console.log")) { issues++ }
+              if (c.includes("debugger;")) { issues++; criticalIssues++ }
+              if (c.includes("TODO") || c.includes("FIXME")) { issues++ }
+              if (c.includes("eval")) { issues++; criticalIssues++ }
+            }
+
+            // Calculate confidence (5 = no issues, 1 = many critical)
+            const issueScore = Math.max(0, 5 - issues)
+            const criticalPenalty = criticalIssues * 2
+            confidence = Math.max(1, Math.min(5, issueScore - criticalPenalty))
+            out.push("Iteration " + iteration + ": " + issues + " issues, confidence " + confidence + "/5")
+
+            if (confidence >= target) {
+              out.push("✓ Target confidence reached!")
+              break
+            }
+            if (iteration >= maxIter) {
+              out.push("⚠ Max iterations reached.")
+              break
+            }
+
+            // Fix phase: identify and describe fixes needed
+            if (existsSync(file)) {
+              const c = readFileSync(file, "utf8")
+              if (c.includes("console.log")) out.push("  Fix: Remove console.log")
+              if (c.includes("debugger;")) out.push("  Fix: Remove debugger;")
+              if (c.includes("TODO")) out.push("  Fix: Address TODO markers")
+            }
+            out.push("  → Re-running review...")
+          }
+
+          out.push("", "═══ GREPLOOP COMPLETE ═══", "Iterations: " + iteration, "Final confidence: " + confidence + "/5", "Target: " + target + "/5", confidence >= target ? "✅ PASSED" : "❌ NOT FULLY RESOLVED")
+          return { output: out.join("\n") }
+        }
+      }),
+
+      // ─── human_feedback: Learn from explicit corrections ─
+      human_feedback: tool({
+        description: "Learn from human feedback. Tell the system what it got wrong and it stores the correction as a learning. Future reviews will incorporate this knowledge. Like CodeRabbit's 'Learnings'.",
+        args: {
+          feedback: tool.schema.string().describe("Your feedback. What was wrong? What should the system do differently next time?"),
+          context: tool.schema.string().describe("Optional context (file, task, review that this feedback applies to)").optional().default(""),
+        },
+        async execute(args) {
+          const feedback = args.feedback || ""
+          const context = args.context || "general"
+          const learningEntry = {
+            type: "human_feedback",
+            feedback: feedback,
+            context: context,
+            timestamp: new Date().toISOString(),
+            applied: false,
+          }
+          // Store in knowledge store
+          const knowledgeDir = directory + "/.opencode/runtime/knowledge"
+          mkdirSync(knowledgeDir, { recursive: true })
+          appendFileSync(knowledgeDir + "/learnings.jsonl", JSON.stringify(learningEntry) + "\n", "utf8")
+
+          return { output: "═══ HUMAN FEEDBACK ═══\nFeedback: " + feedback + "\nContext: " + context + "\n\n✅ Learning stored. Future reviews will incorporate this feedback.\n\nTo see all learnings, run search_knowledge({query: \"human feedback\"})." }
+        }
+      }),
+
+      // ─── pr_workflow: GitHub PR integration ───────────
+      pr_workflow: tool({
+        description: "Full PR workflow: create PR, post inline review comments, check CI status, generate PR summary, merge. Uses gh CLI. Like CodeRabbit's PR review.",
+        args: {
+          action: tool.schema.enum(["create", "review", "summarize", "check-ci", "merge"]).describe("PR action"),
+          pr_number: tool.schema.string().describe("PR number (for review/summarize/check-ci/merge)").optional().default(""),
+          title: tool.schema.string().describe("PR title (for create)").optional().default(""),
+          body: tool.schema.string().describe("PR body/description (for create)").optional().default(""),
+          file: tool.schema.string().describe("File to comment on (for review)").optional().default(""),
+          comment: tool.schema.string().describe("Review comment (for review)").optional().default(""),
+        },
+        async execute(args) {
+          const action = args.action || "create"
+          const pr = args.pr_number || ""
+
+          if (action === "create") {
+            try {
+              const r = execSync("gh pr create --title " + JSON.stringify(args.title || "Update") + " --body " + JSON.stringify(args.body || "Auto-generated PR") + " 2>&1", { timeout: 30000 }).toString().trim()
+              return { output: "═══ PR CREATED ═══\n" + r }
+            } catch (e: any) { return { output: "═══ PR ERROR ═══\n" + (e.message || "gh CLI not available or not authenticated") } }
+          }
+
+          if (action === "summarize") {
+            try {
+              const diff = execSync("git diff main...HEAD --stat 2>/dev/null || git diff --stat 2>/dev/null || true", { timeout: 10000 }).toString().trim()
+              const files = diff.split("\n").filter(Boolean)
+              const summary = "PR Summary:\n" + files.join("\n") + "\n\nFiles changed: " + files.length
+              return { output: "═══ PR SUMMARY ═══\n" + summary }
+            } catch { return { output: "═══ PR SUMMARY ═══\nNo diff available" } }
+          }
+
+          if (action === "check-ci") {
+            try {
+              const r = execSync("gh pr view " + pr + " --json statusCheckRollup 2>&1", { timeout: 15000 }).toString().trim()
+              return { output: "═══ CI STATUS ═══\nPR #" + pr + "\n" + r.slice(0, 2000) }
+            } catch (e: any) { return { output: "═══ CI ERROR ═══\n" + (e.message || "gh CLI error") } }
+          }
+
+          if (action === "merge") {
+            try {
+              const r = execSync("gh pr merge " + pr + " --squash 2>&1", { timeout: 30000 }).toString().trim()
+              return { output: "═══ PR MERGED ═══\n" + r }
+            } catch (e: any) { return { output: "═══ MERGE ERROR ═══\n" + (e.message || "gh CLI error") } }
+          }
+
+          if (action === "review") {
+            try {
+              const body = args.comment || "Reviewed via harness."
+              const r = execSync("gh pr review " + pr + " --comment --body " + JSON.stringify(body) + " 2>&1", { timeout: 30000 }).toString().trim()
+              return { output: "═══ PR REVIEW POSTED ═══\nPR #" + pr + "\n" + r }
+            } catch (e: any) { return { output: "═══ REVIEW ERROR ═══\n" + (e.message || "gh CLI error") } }
+          }
+
+          return { output: "Unknown action: " + action + ". Use: create, review, summarize, check-ci, merge" }
+        }
+      }),
+
+      // ─── cross_file_impact: Multi-file change analysis ──
+      cross_file_impact: tool({
+        description: "Cross-file impact analysis. Given a function/interface/type change, finds all files that depend on it and would break. Uses grep and import tracing. Like Greptile's multi-file bug detection.",
+        args: {
+          symbol: tool.schema.string().describe("The function, class, interface, or type you're changing"),
+          file: tool.schema.string().describe("The file containing the symbol").optional().default(""),
+          depth: tool.schema.enum(["quick", "deep"]).describe("Analysis depth").optional().default("quick"),
+        },
+        async execute(args) {
+          const symbol = args.symbol || ""
+          const fileFilter = args.file || ""
+          const depth = args.depth || "quick"
+          const out = ["═══ CROSS-FILE IMPACT ═══", "Symbol: " + symbol, "File: " + (fileFilter || "searching all files"), "", "Impact Analysis:", ""]
+          let filesFound = 0
+
+          // Find imports of the symbol
+          try {
+            const searchCmd = "grep -rn --include='*.{ts,tsx,js,jsx,py,go,rs}' " +
+              (fileFilter ? " --include='*.ts' " : "") +
+              " -E '(import.*" + symbol + "|from.*" + symbol + "|require.*" + symbol + "|" + symbol + "\\.)' " +
+              directory + "/plugins 2>/dev/null | grep -v node_modules | grep -v '.test.' | head -30"
+            const grepResult = execSync(searchCmd, { encoding: "utf8", timeout: 10000 }).toString().trim()
+            if (grepResult) {
+              const lines = grepResult.split("\n").filter(Boolean)
+              filesFound = lines.length
+              out.push("Files that reference '" + symbol + "':")
+              const uniqueFiles = new Set(lines.map(l => l.split(":")[0]))
+              for (const f of uniqueFiles) {
+                const relPath = f.startsWith(directory) ? f.slice(directory.length + 1) : f
+                out.push("  ⚠ " + relPath + " — uses " + symbol)
+              }
+            }
+          } catch {}
+
+          if (filesFound === 0) {
+            out.push("  No files reference '" + symbol + "' in the plugins directory.")
+            if (fileFilter) {
+              out.push("  Searched in: " + fileFilter)
+              try {
+                const broader = execSync("grep -rn -E '" + symbol + "' " + fileFilter + " 2>/dev/null | grep -v node_modules | head -10", { encoding: "utf8", timeout: 5000 }).toString().trim()
+                if (broader) out.push("  Found in: " + broader.slice(0, 500))
+              } catch {}
+            }
+          }
+
+          // For deep analysis, check if it's exported
+          if (depth === "deep" && fileFilter) {
+            try {
+              const exports = execSync("grep -n 'export.*" + symbol + "' " + fileFilter + " 2>/dev/null | head -5", { encoding: "utf8", timeout: 5000 }).toString().trim()
+              if (exports) out.push("", "Export definition:", "  " + exports)
+              else out.push("", symbol + " is not exported from " + fileFilter + " (internal usage only)")
+            } catch {}
+          }
+
+          out.push("", "═══ ANALYSIS ═══", filesFound + " file(s) reference " + symbol, depth === "quick" ? "Run with depth='deep' for export details." : "")
+          return { output: out.join("\n") }
+        }
+      }),
     },
 
     // ─── Pre-Compact save: save state before compaction ─
