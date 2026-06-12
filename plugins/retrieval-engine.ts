@@ -19,12 +19,17 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, appendFileSync } from "fs"
+import { readFileSync, existsSync, mkdirSync, readdirSync, appendFileSync } from "fs"
 import * as crypto from "crypto"
+import * as path from "path"
 
 const KNOWLEDGE_DIR = ".opencode/runtime/knowledge"
-const MEMORY_DIR = ".opencode/runtime/memory"
-const TRANSCRIPT_DIR = "C:/Users/Lenovo/.claude/projects/c--Users-Lenovo-Music-Only-Opencode-making-opencode-low-models-behave-like-opus-4-8-and-above-models-with-claude-code-in-VS-Code"
+
+// Dynamic transcript dir — resolves to Claude projects folder
+function getTranscriptDir(): string {
+  const home = process.env.USERPROFILE || process.env.HOME || "C:/Users/default"
+  return path.join(home, ".claude", "projects")
+}
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -53,11 +58,6 @@ function appendJSONL(file: string, entry: any) {
 
 function shortHash(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex").slice(0, 8)
-}
-
-function grepGithub(g: string): any[] {
-  // Use any available tool
-  return []
 }
 
 // ─── Pass 0: Intent Extraction ──────────────────────────────
@@ -111,6 +111,40 @@ function extractIntent(currentMsg: string, recentMessages: string[]): {
   const keywords = [...new Set(allKeywords.filter(w => w.length > 3 && !stopWords.includes(w)))]
 
   return { enriched, keywords, entities, timeRef, action }
+}
+
+// ─── Method 3: Vector Embedding (character n-gram, zero dependencies) ──
+
+function embed(text: string): number[] {
+  const normalized = text.toLowerCase()
+  const ngrams = new Map<string, number>()
+  for (let n = 2; n <= 3; n++) {
+    for (let i = 0; i <= normalized.length - n; i++) {
+      const gram = normalized.slice(i, i + n)
+      ngrams.set(gram, (ngrams.get(gram) || 0) + 1)
+    }
+  }
+  const values = Array.from(ngrams.values())
+  const magnitude = Math.sqrt(values.reduce((s: number, v: number) => s + v * v, 0)) || 1
+  return values.map(v => v / magnitude).slice(0, 200)
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length)
+  let dot = 0, magA = 0, magB = 0
+  for (let i = 0; i < len; i++) { dot += a[i] * b[i]; magA += a[i] * a[i]; magB += b[i] * b[i] }
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB) || 1)
+}
+
+function searchVector(query: string, items: Array<{ text: string; score?: number; timestamp?: string }>, limit = 10): Array<{ text: string; score: number; timestamp: string; source: string }> {
+  const queryVec = embed(query)
+  const scored = items.map(item => ({
+    text: item.text,
+    score: cosineSimilarity(queryVec, embed(item.text)),
+    timestamp: item.timestamp || "",
+    source: "vector_embedding"
+  }))
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit)
 }
 
 // ─── Search Methods ─────────────────────────────────────────
@@ -286,11 +320,12 @@ function searchGraphify(query: string, dir: string, limit = 10): Array<{ text: s
 function searchTranscripts(query: string, limit = 10): Array<{ text: string; score: number; timestamp: string; source: string; line?: number; file?: string }> {
   const results: Array<{ text: string; score: number; timestamp: string; source: string; line?: number; file?: string }> = []
   try {
-    if (!existsSync(TRANSCRIPT_DIR)) return results
-    const files = readdirSync(TRANSCRIPT_DIR).filter(f => f.endsWith(".jsonl"))
+    const tDir = getTranscriptDir()
+    if (!existsSync(tDir)) return results
+    const files = readdirSync(tDir).filter((f: string) => f.endsWith(".jsonl"))
     const qWords = query.toLowerCase().split(/\W+/).filter((w: string) => w.length > 2)
     for (const f of files.slice(-10)) { // Last 10 session files
-      const fp = `${TRANSCRIPT_DIR}/${f}`
+      const fp = `${tDir}/${f}`
       const lines = readLines(fp)
       for (let i = 0; i < lines.length; i++) {
         try {
@@ -342,7 +377,7 @@ function searchGraphNodes(query: string, dir: string, limit = 10): Array<{ text:
 }
 
 // Method 11: Temporal recency (modifier — applied to all results)
-function applyRecency(results: Array<{ text: string; score: number; timestamp: string; source: string }>): Array<{ text: string; score: number; timestamp: string; source: string }> {
+function applyRecency(results: Array<{ text: string; score: number; timestamp: string; source: string; nodeId?: string; line?: number; file?: string }>): Array<{ text: string; score: number; timestamp: string; source: string; nodeId?: string; line?: number; file?: string }> {
   const now = Date.now()
   return results.map(r => {
     const ts = new Date(r.timestamp || 0).getTime()
@@ -547,9 +582,14 @@ export const RetrievalEnginePlugin: Plugin = async ({ directory }) => {
           // ── PASS 2: 14-Way Parallel Search ───────────
           const allResults: Array<{ text: string; score: number; timestamp: string; source: string; nodeId?: string; line?: number; file?: string }> = []
 
-          // Methods 1-8, 10-14 (all search methods)
+          // Methods 1-13 (all search methods)
+          const searchItems = [
+            ...(readJSONL(`${directory}/${KNOWLEDGE_DIR}/examples.jsonl`).map((e: any) => ({ text: (e.problem || "") + " " + (e.solution || ""), score: e.score, timestamp: e.timestamp }))),
+            ...(readJSONL(`${directory}/${KNOWLEDGE_DIR}/../memory/decisions.jsonl`).map((d: any) => ({ text: (d.what || "") + " " + (d.why || ""), score: 0.8, timestamp: d.timestamp }))),
+          ]
           const searches = [
             () => searchBM25(searchQuery),
+            () => searchVector(searchQuery, searchItems),
             () => searchCodeGrep(searchQuery, directory),
             () => searchTFIDF(searchQuery),
             () => searchKnowledge(searchQuery, directory),
@@ -842,6 +882,23 @@ export const RetrievalEnginePlugin: Plugin = async ({ directory }) => {
           }
 
           return { output: lines.join("\n") }
+        }
+      }),
+
+      // ─── supersede: Mark past decision as obsolete ────
+      supersede: tool({
+        description: "Marks a past decision or event as superseded. The old entry is NOT deleted — retrieval will flag it as OBSOLETE instead of presenting it as current truth.",
+        args: {
+          id: tool.schema.string().describe("ID of the decision/event to mark obsolete (from temporal_chain output)"),
+          reason: tool.schema.string().describe("Why this is being superseded"),
+          new_decision: tool.schema.string().describe("What the new correct fact is").optional().default(""),
+        },
+        async execute(args) {
+          const id = args.id || ""
+          if (!id) return { output: "Error: 'id' is required. Use temporal_chain first." }
+          const graphFile = `${directory}/${KNOWLEDGE_DIR}/session-graph.jsonl`
+          appendJSONL(graphFile, { type: "obsolete", targetId: id, reason: args.reason, newDecision: args.new_decision || undefined })
+          return { output: `═══ SUPERSEDE ═══\nMarked "${id}" as obsolete.\nReason: ${args.reason}\n[Correction] Old entry preserved (audit trail). Retrieval will flag it as OBSOLETE.` }
         }
       }),
     },
